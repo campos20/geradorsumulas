@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gerador de Súmulas</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.min.js"></script>
+  <style>
+    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f3f4f6; }
+    body { margin: 0; }
+    main { max-width: 920px; margin: 0 auto; padding: 32px 20px 56px; }
+    .card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 12px 30px rgba(15,23,42,.08); }
+    h1 { margin: 0 0 8px; font-size: 32px; }
+    p { color: #4b5563; line-height: 1.5; }
+    label { font-weight: 650; display: block; margin: 18px 0 8px; }
+    input[type="text"], input[type="number"], select { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db; border-radius: 10px; padding: 12px; font-size: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 14px; margin-top: 8px; }
+    .event { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #f9fafb; border-radius: 8px; }
+    .other-event { margin-top: 12px; }
+    .other-event input[type="text"] { margin-top: 8px; }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+    button { margin-top: 24px; width: 100%; border: 0; border-radius: 12px; padding: 14px 18px; font-size: 16px; font-weight: 800; color: white; background: #2563eb; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .small { font-size: 13px; color: #6b7280; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Gerador de Súmulas</h1>
+
+    <label for="competitionName">Nome da competição</label>
+    <input id="competitionName" type="text" placeholder="Ex: Cubo Fest 2026" />
+
+    <div class="row">
+      <div>
+        <label for="cardsPerEvent">Súmulas por evento</label>
+        <input id="cardsPerEvent" type="number" min="1" max="200" value="4" />
+      </div>
+      <div>
+        <label for="attempts">Tentativas</label>
+        <select id="attempts">
+          <option value="5" selected>5 tentativas</option>
+          <option value="3">3 tentativas</option>
+          <option value="2">2 tentativas</option>
+          <option value="1">1 tentativa</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Eventos</label>
+    <div class="grid" id="events"></div>
+
+    <div class="other-event">
+      <label class="event">
+        <input id="otherEventCheckbox" type="checkbox" />
+        Outro
+      </label>
+      <input id="otherEventName" type="text" placeholder="Digite o nome do evento" disabled />
+    </div>
+
+    <button id="generate">Gerar PDF</button>
+  </div>
+</main>
+
+<script>
+const EVENT_NAMES = {
+  "333": "3x3x3 Cube", "222": "2x2x2 Cube", "444": "4x4x4 Cube", "555": "5x5x5 Cube",
+  "666": "6x6x6 Cube", "777": "7x7x7 Cube", "333bf": "3x3x3 Blindfolded",
+  "333oh": "3x3x3 One-Handed", "clock": "Clock", "minx": "Megaminx", "pyram": "Pyraminx", "skewb": "Skewb",
+  "sq1": "Square-1", "444bf": "4x4x4 Blindfolded", "555bf": "5x5x5 Blindfolded", "333mbf": "3x3x3 Multi-Blind"
+};
+const EVENTS = ["333","222","444","555","666","777","333bf","333oh","clock","minx","pyram","skewb","sq1","444bf","555bf","333mbf"];
+
+const eventsDiv = document.getElementById("events");
+EVENTS.forEach(id => {
+  const label = document.createElement("label");
+  label.className = "event";
+  label.innerHTML = `<input type="checkbox" value="${id}" ${id === "333" ? "checked" : ""}> ${EVENT_NAMES[id]}`;
+  eventsDiv.appendChild(label);
+});
+
+const scorecardPaperSizeInfos = {
+  a4: { pageWidth: 595.28, pageHeight: 841.89, scorecardsPerRow: 2, scorecardsPerPage: 4, horizontalMargin: 15, verticalMargin: 15 }
+};
+const noBorder = { border: [false, false, false, false] };
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+function times(n, fn) { return Array.from({ length: n }, (_, i) => fn(i)); }
+function sanitizeFilename(value) { return value.replace(/[\\/:*?"<>|]+/g, "-").trim() || "sumulas"; }
+
+function cutLine(properties) {
+  return { ...properties, type: "line", lineWidth: 0.1, dash: { length: 10 }, lineColor: "#888888" };
+}
+function columnLabels(labels, style = {}) {
+  return labels.map(label => ({ ...style, ...noBorder, fontSize: 9, ...(Array.isArray(label) ? { columns: label } : { text: label }) }));
+}
+function attemptRow(attemptNumber) {
+  return [
+    { text: attemptNumber, ...noBorder, fontSize: 20, bold: true, alignment: "center" },
+    {}, {}, {}, {}
+  ];
+}
+function attemptsSeparator(scorecardWidth) {
+  return [{ ...noBorder, colSpan: 5, margin: [0, 1], columns: [] }];
+}
+function attemptRows(attemptCount, scorecardWidth) {
+  return times(attemptCount, i => attemptRow(i + 1)).reduce((rows, row, i) => {
+    return i + 1 === attemptCount ? [...rows, row] : [...rows, row, attemptsSeparator(scorecardWidth)];
+  }, []);
+}
+
+function scorecard({ competitionName, eventName, attemptCount = 5, paperSize = "a4" }) {
+  const { pageWidth, scorecardsPerRow, horizontalMargin } = scorecardPaperSizeInfos[paperSize];
+  const scorecardWidth = pageWidth / scorecardsPerRow - 2 * horizontalMargin;
+  const roundNumber = "";
+  const groupNumber = "";
+  return [
+    { fontSize: 10, columns: [{ text: "", alignment: "left" }, {}] },
+    { text: competitionName, bold: true, fontSize: 15, margin: [0, 0, 0, 10], alignment: "center" },
+    { margin: [25, 0, 0, 0], table: { widths: ["*", 30, 30], body: [
+      columnLabels([{ text: "Event" }, { text: "Round", alignment: "center" }, { text: "Group", alignment: "center" }]),
+      [{ text: eventName }, { text: roundNumber, alignment: "center" }, { text: groupNumber, alignment: "center" }]
+    ] } },
+    { margin: [25, 0, 0, 0], table: { widths: [30, "*"], body: [
+      columnLabels([{ text: "ID" }, [{ text: "Name", alignment: "left", width: "auto" }, { text: " ", alignment: "right" }]]),
+      [{ text: " ", alignment: "center" }, { text: " ", maxHeight: 20 }]
+    ] } },
+    { margin: [0, 10, 0, 0], table: { widths: [16, 25, "*", 25, 25], body: [
+      columnLabels(["", { text: "Scr" }, { text: "Result" }, { text: "Judge" }, { text: "Comp" }], { alignment: "center" }),
+      ...attemptRows(attemptCount, scorecardWidth),
+      [{ text: "Extra (Delegate initials _______)", ...noBorder, colSpan: 5, margin: [0, 1], fontSize: 10 }],
+      attemptRow("_"),
+      [{ text: "", ...noBorder, colSpan: 5, margin: [0, 1] }]
+    ] } },
+    { fontSize: 10, columns: [{}, {}] }
+  ];
+}
+
+function scorecardsPdfDefinition(scorecardList, paperSize = "a4") {
+  const { pageWidth, pageHeight, scorecardsPerRow, scorecardsPerPage, horizontalMargin, verticalMargin } = scorecardPaperSizeInfos[paperSize];
+  const remainder = scorecardList.length % scorecardsPerPage;
+  if (remainder) scorecardList = scorecardList.concat(times(scorecardsPerPage - remainder, () => ({})));
+  return {
+    pageSize: { width: pageWidth, height: pageHeight },
+    pageMargins: [horizontalMargin, verticalMargin],
+    background: [{ canvas: [
+      cutLine({ x1: horizontalMargin, y1: pageHeight / 2, x2: pageWidth - horizontalMargin, y2: pageHeight / 2 }),
+      cutLine({ x1: pageWidth / 2, y1: verticalMargin, x2: pageWidth / 2, y2: pageHeight - verticalMargin })
+    ] }],
+    content: { layout: {
+      paddingLeft: i => (i % scorecardsPerRow === 0 ? 0 : horizontalMargin),
+      paddingRight: i => (i % scorecardsPerRow === scorecardsPerRow - 1 ? 0 : horizontalMargin),
+      paddingTop: i => (i % scorecardsPerRow === 0 ? 0 : verticalMargin),
+      paddingBottom: i => (i % scorecardsPerRow === scorecardsPerRow - 1 ? 0 : verticalMargin),
+      hLineWidth: () => 0, vLineWidth: () => 0
+    }, table: {
+      widths: Array(scorecardsPerRow).fill("*"),
+      heights: pageHeight / scorecardsPerRow - 2 * verticalMargin,
+      dontBreakRows: true,
+      body: chunk(scorecardList, scorecardsPerRow)
+    } }
+  };
+}
+
+const otherEventCheckbox = document.getElementById("otherEventCheckbox");
+const otherEventName = document.getElementById("otherEventName");
+
+otherEventCheckbox.addEventListener("change", () => {
+  otherEventName.disabled = !otherEventCheckbox.checked;
+  if (otherEventCheckbox.checked) otherEventName.focus();
+});
+
+document.getElementById("generate").addEventListener("click", () => {
+  const competitionName = document.getElementById("competitionName").value.trim() || "Competição sem nome";
+  const cardsPerEvent = Math.max(1, Math.min(200, Number(document.getElementById("cardsPerEvent").value) || 4));
+  const attemptCount = Number(document.getElementById("attempts").value) || 5;
+  const selectedEvents = Array.from(document.querySelectorAll('#events input:checked'))
+    .map(input => EVENT_NAMES[input.value]);
+
+  if (otherEventCheckbox.checked) {
+    const customEventName = otherEventName.value.trim();
+    if (!customEventName) {
+      alert("Digite o nome do evento em Outro.");
+      otherEventName.focus();
+      return;
+    }
+    selectedEvents.push(customEventName);
+  }
+
+  if (selectedEvents.length === 0) { alert("Selecione pelo menos um evento."); return; }
+  const cards = selectedEvents.flatMap(eventName => times(cardsPerEvent, () => scorecard({ competitionName, eventName, attemptCount })));
+  pdfMake.createPdf(scorecardsPdfDefinition(cards)).download(`${sanitizeFilename(competitionName)}-scorecards.pdf`);
+});
+</script>
+</body>
+</html>
