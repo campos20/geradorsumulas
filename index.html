@@ -201,6 +201,14 @@
               placeholder="Ex: 10:00"
               disabled
             />
+            <label class="event" style="margin-top: 8px">
+              <input
+                id="timeLimitCumulativeCheckbox"
+                type="checkbox"
+                disabled
+              />
+              Cumulativo (tempo total da rodada, não por tentativa)
+            </label>
           </div>
         </div>
 
@@ -298,6 +306,10 @@
         else parts.push(String(minutes));
         parts.push(String(seconds).padStart(2, "0"));
         return parts.join(":");
+      }
+      function timeLimitToString(timeLimit) {
+        const formatted = formatDuration(timeLimit.seconds);
+        return timeLimit.cumulative ? `${formatted} (cumulative)` : formatted;
       }
 
       function cutLine(properties) {
@@ -476,7 +488,7 @@
                 : {},
               timeLimit
                 ? {
-                    text: `Limite: ${formatDuration(timeLimit.seconds)}`,
+                    text: `Limit: ${timeLimitToString(timeLimit)}`,
                     alignment: "center",
                   }
                 : {},
@@ -566,8 +578,12 @@
 
       const timeLimitCheckbox = document.getElementById("timeLimitCheckbox");
       const timeLimitTimeInput = document.getElementById("timeLimitTime");
+      const timeLimitCumulativeCheckbox = document.getElementById(
+        "timeLimitCumulativeCheckbox",
+      );
       timeLimitCheckbox.addEventListener("change", () => {
         timeLimitTimeInput.disabled = !timeLimitCheckbox.checked;
+        timeLimitCumulativeCheckbox.disabled = !timeLimitCheckbox.checked;
         if (timeLimitCheckbox.checked) timeLimitTimeInput.focus();
       });
 
@@ -630,7 +646,10 @@
             timeLimitTimeInput.focus();
             return;
           }
-          timeLimit = { seconds: timeLimitSeconds };
+          timeLimit = {
+            seconds: timeLimitSeconds,
+            cumulative: timeLimitCumulativeCheckbox.checked,
+          };
         }
 
         const cards = selectedEvents.flatMap((eventName) =>
