@@ -150,6 +150,60 @@
           />
         </div>
 
+        <div class="row">
+          <div>
+            <label class="event">
+              <input id="cutoffCheckbox" type="checkbox" />
+              Usar cutoff
+            </label>
+            <div class="grid" style="grid-template-columns: 1fr 1fr">
+              <div>
+                <label
+                  for="cutoffAttempts"
+                  class="small"
+                  style="margin: 8px 0 4px"
+                >
+                  Tentativas até o cutoff
+                </label>
+                <input
+                  id="cutoffAttempts"
+                  type="number"
+                  min="1"
+                  max="4"
+                  value="2"
+                  disabled
+                />
+              </div>
+              <div>
+                <label for="cutoffTime" class="small" style="margin: 8px 0 4px">
+                  Tempo do cutoff (mm:ss)
+                </label>
+                <input
+                  id="cutoffTime"
+                  type="text"
+                  placeholder="Ex: 1:00"
+                  disabled
+                />
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="event">
+              <input id="timeLimitCheckbox" type="checkbox" />
+              Usar limite de tempo
+            </label>
+            <label for="timeLimitTime" class="small" style="margin: 8px 0 4px">
+              Limite de tempo (mm:ss)
+            </label>
+            <input
+              id="timeLimitTime"
+              type="text"
+              placeholder="Ex: 10:00"
+              disabled
+            />
+          </div>
+        </div>
+
         <button id="generate">Gerar PDF</button>
       </div>
     </main>
@@ -225,6 +279,27 @@
         return value.replace(/[\\/:*?"<>|]+/g, "-").trim() || "sumulas";
       }
 
+      function parseDuration(text) {
+        const trimmed = (text || "").trim();
+        if (!trimmed) return null;
+        const parts = trimmed.split(":");
+        if (parts.length > 3) return null;
+        const numbers = parts.map(Number);
+        if (numbers.some((n) => Number.isNaN(n) || n < 0)) return null;
+        return numbers.reduce((total, n) => total * 60 + n, 0);
+      }
+      function formatDuration(totalSeconds) {
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const parts = [];
+        if (hours > 0)
+          parts.push(String(hours), String(minutes).padStart(2, "0"));
+        else parts.push(String(minutes));
+        parts.push(String(seconds).padStart(2, "0"));
+        return parts.join(":");
+      }
+
       function cutLine(properties) {
         return {
           ...properties,
@@ -257,15 +332,44 @@
           {},
         ];
       }
-      function attemptsSeparator(scorecardWidth) {
-        return [{ ...noBorder, colSpan: 5, margin: [0, 1], columns: [] }];
+      function attemptsSeparator(showCutoffLine, scorecardWidth) {
+        return [
+          {
+            ...noBorder,
+            colSpan: 5,
+            margin: [0, 1],
+            columns: !showCutoffLine
+              ? []
+              : [
+                  {
+                    canvas: [
+                      {
+                        type: "line",
+                        x1: 0,
+                        y1: 0,
+                        x2: scorecardWidth,
+                        y2: 0,
+                        dash: { length: 5 },
+                      },
+                    ],
+                  },
+                ],
+          },
+        ];
       }
-      function attemptRows(attemptCount, scorecardWidth) {
+      function attemptRows(attemptCount, scorecardWidth, cutoff) {
         return times(attemptCount, (i) => attemptRow(i + 1)).reduce(
           (rows, row, i) => {
             return i + 1 === attemptCount
               ? [...rows, row]
-              : [...rows, row, attemptsSeparator(scorecardWidth)];
+              : [
+                  ...rows,
+                  row,
+                  attemptsSeparator(
+                    !!cutoff && i + 1 === cutoff.numberOfAttempts,
+                    scorecardWidth,
+                  ),
+                ];
           },
           [],
         );
@@ -276,6 +380,8 @@
         eventName,
         attemptCount = 5,
         paperSize = "a4",
+        cutoff = null,
+        timeLimit = null,
       }) {
         const { pageWidth, scorecardsPerRow, horizontalMargin } =
           scorecardPaperSizeInfos[paperSize];
@@ -344,7 +450,7 @@
                   ],
                   { alignment: "center" },
                 ),
-                ...attemptRows(attemptCount, scorecardWidth),
+                ...attemptRows(attemptCount, scorecardWidth, cutoff),
                 [
                   {
                     text: "Extra (Delegate initials _______)",
@@ -359,7 +465,23 @@
               ],
             },
           },
-          { fontSize: 10, columns: [{}, {}] },
+          {
+            fontSize: 10,
+            columns: [
+              cutoff
+                ? {
+                    text: `Cutoff: < ${formatDuration(cutoff.seconds)} (${cutoff.numberOfAttempts} tentativas)`,
+                    alignment: "center",
+                  }
+                : {},
+              timeLimit
+                ? {
+                    text: `Limite: ${formatDuration(timeLimit.seconds)}`,
+                    alignment: "center",
+                  }
+                : {},
+            ],
+          },
         ];
       }
 
@@ -433,6 +555,22 @@
         if (otherEventCheckbox.checked) otherEventName.focus();
       });
 
+      const cutoffCheckbox = document.getElementById("cutoffCheckbox");
+      const cutoffAttemptsInput = document.getElementById("cutoffAttempts");
+      const cutoffTimeInput = document.getElementById("cutoffTime");
+      cutoffCheckbox.addEventListener("change", () => {
+        cutoffAttemptsInput.disabled = !cutoffCheckbox.checked;
+        cutoffTimeInput.disabled = !cutoffCheckbox.checked;
+        if (cutoffCheckbox.checked) cutoffTimeInput.focus();
+      });
+
+      const timeLimitCheckbox = document.getElementById("timeLimitCheckbox");
+      const timeLimitTimeInput = document.getElementById("timeLimitTime");
+      timeLimitCheckbox.addEventListener("change", () => {
+        timeLimitTimeInput.disabled = !timeLimitCheckbox.checked;
+        if (timeLimitCheckbox.checked) timeLimitTimeInput.focus();
+      });
+
       document.getElementById("generate").addEventListener("click", () => {
         const competitionName =
           document.getElementById("competitionName").value.trim() ||
@@ -464,9 +602,46 @@
           alert("Selecione pelo menos um evento.");
           return;
         }
+
+        let cutoff = null;
+        if (cutoffCheckbox.checked) {
+          if (attemptCount < 2) {
+            alert("Cutoff exige pelo menos 2 tentativas.");
+            return;
+          }
+          const cutoffSeconds = parseDuration(cutoffTimeInput.value);
+          if (cutoffSeconds === null) {
+            alert("Informe um tempo de cutoff válido (mm:ss).");
+            cutoffTimeInput.focus();
+            return;
+          }
+          const numberOfAttempts = Math.max(
+            1,
+            Math.min(attemptCount - 1, Number(cutoffAttemptsInput.value) || 2),
+          );
+          cutoff = { numberOfAttempts, seconds: cutoffSeconds };
+        }
+
+        let timeLimit = null;
+        if (timeLimitCheckbox.checked) {
+          const timeLimitSeconds = parseDuration(timeLimitTimeInput.value);
+          if (timeLimitSeconds === null) {
+            alert("Informe um limite de tempo válido (mm:ss).");
+            timeLimitTimeInput.focus();
+            return;
+          }
+          timeLimit = { seconds: timeLimitSeconds };
+        }
+
         const cards = selectedEvents.flatMap((eventName) =>
           times(cardsPerEvent, () =>
-            scorecard({ competitionName, eventName, attemptCount }),
+            scorecard({
+              competitionName,
+              eventName,
+              attemptCount,
+              cutoff,
+              timeLimit,
+            }),
           ),
         );
         pdfMake
